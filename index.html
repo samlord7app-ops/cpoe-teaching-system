@@ -831,18 +831,18 @@
     }
 
     let qrcode = null;
-    window.openQrModal = function() {
-      document.getElementById('qrModal').classList.remove('hidden');
+    function buildStudentJoinUrl(rawUrl) {
+      const source = (rawUrl || window.location.href).trim();
+      const normalized = new URL(source, window.location.href);
+      normalized.search = "";
+      normalized.hash = "";
+      normalized.searchParams.set("role", "student");
+      return normalized.href;
+    }
+
+    function ensureQrCode() {
       if (!qrcode) {
-        let currentUrl = window.location.href.split('?')[0];
-        
-        if(currentUrl.includes('blob:') || currentUrl.includes('localhost') || currentUrl.includes('file://')) {
-          showToast("警告：目前為本機或預覽網址，手機可能無法直接連線。請自訂 Github 網址更新 QR。", "warning");
-        }
-        
-        let joinUrl = `${currentUrl}?role=student`;
         qrcode = new QRCode(document.getElementById("qrcodeCanvas"), {
-          text: joinUrl,
           width: 220,
           height: 220,
           colorDark : "#0f172a",
@@ -852,6 +852,19 @@
       }
     }
 
+    window.openQrModal = function() {
+      document.getElementById('qrModal').classList.remove('hidden');
+
+      const currentUrl = window.location.href;
+      if(currentUrl.includes('blob:') || currentUrl.includes('localhost') || currentUrl.includes('file://')) {
+        showToast("警告：目前為本機或預覽網址，手機可能無法直接連線。請自訂 Github 網址更新 QR。", "warning");
+      }
+
+      ensureQrCode();
+      qrcode.clear();
+      qrcode.makeCode(buildStudentJoinUrl(currentUrl));
+    }
+
     window.closeQrModal = function() {
       document.getElementById('qrModal').classList.add('hidden');
     }
@@ -859,9 +872,9 @@
     window.updateQrCode = function() {
       let customUrl = document.getElementById('customUrlInput').value.trim();
       if(customUrl) {
-        let joinUrl = customUrl.split('?')[0] + "?role=student";
+        ensureQrCode();
         qrcode.clear();
-        qrcode.makeCode(joinUrl);
+        qrcode.makeCode(buildStudentJoinUrl(customUrl));
         showToast("QR Code 已成功更新為自訂網址", "success");
       } else {
         showToast("請輸入有效的網址", "error");
