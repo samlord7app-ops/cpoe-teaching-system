@@ -3,895 +3,904 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>住院醫師電腦處方教學系統：用藥安全與決策演練</title>
-  <!-- Tailwind CSS CDN -->
+  <title>住院醫師電腦處方教學系統</title>
+  
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <!-- QRCode.js for Dynamic QR Code Generation -->
+  <!-- QRCode.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- MQTT.js for Real-time Cloud Sync -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <!-- Canvas Confetti -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+  
   <script>
     tailwind.config = {
-      darkMode: 'class',
       theme: {
         extend: {
-          colors: {
-            monitorBg: '#090d16',
-            ecgGreen: '#00ff66',
-            artRed: '#ff3344',
-            plethBlue: '#00d0ff',
-            co2Yellow: '#ffea00',
-            medicalDark: '#0f172a'
+          animation: {
+            'shake': 'shake 0.5s cubic-bezier(.36,.07,.19,.97) both',
+            'pulse-glow': 'pulseGlow 2s infinite',
           },
-          fontFamily: {
-            mono: ['Courier New', 'monospace', 'ui-monospace']
+          keyframes: {
+            shake: {
+              '10%, 90%': { transform: 'translate3d(-1px, 0, 0)' },
+              '20%, 80%': { transform: 'translate3d(2px, 0, 0)' },
+              '30%, 50%, 70%': { transform: 'translate3d(-4px, 0, 0)' },
+              '40%, 60%': { transform: 'translate3d(4px, 0, 0)' }
+            },
+            pulseGlow: {
+              '0%, 100%': { boxShadow: '0 0 0 0 rgba(239, 68, 68, 0.4)' },
+              '50%': { boxShadow: '0 0 15px 5px rgba(239, 68, 68, 0.6)' }
+            }
           }
         }
       }
     }
   </script>
   <style>
-    .crt-overlay {
-      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-      background-size: 100% 3px, 3px 100%;
-      pointer-events: none;
+    .fade-in-up {
+      animation: fadeInUp 0.4s ease-out forwards;
     }
-    .text-shadow-glow {
-      text-shadow: 0 0 8px currentColor;
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
-    .custom-scroll::-webkit-scrollbar {
-      width: 6px;
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #475569; border-radius: 4px; }
+    
+    /* Toast Styles */
+    #toastContainer {
+      position: fixed;
+      top: 1.5rem;
+      right: 1.5rem;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
     }
-    .custom-scroll::-webkit-scrollbar-thumb {
-      background-color: #334155;
-      border-radius: 9999px;
+    .toast {
+      background: #1e293b;
+      color: white;
+      padding: 1rem 1.5rem;
+      border-radius: 0.5rem;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      transform: translateX(120%);
+      opacity: 0;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+      border-left: 5px solid #3b82f6;
+      font-size: 0.9rem;
+      font-weight: 500;
+      min-width: 250px;
     }
-    @keyframes pulseGlow {
-      0%, 100% { box-shadow: 0 0 5px rgba(239, 68, 68, 0.4); }
-      50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.8); }
-    }
-    .alert-pulse {
-      animation: pulseGlow 2s infinite;
-    }
+    .toast.show { transform: translateX(0); opacity: 1; }
+    .toast.success { border-color: #10b981; }
+    .toast.error { border-color: #ef4444; }
+    .toast.warning { border-color: #f59e0b; }
+    .toast.info { border-color: #3b82f6; }
+    .shake-err { animation: shake 0.5s; background-color: rgba(239, 68, 68, 0.2) !important; border-color: #ef4444 !important; }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col select-none overflow-x-hidden">
+<body class="bg-slate-950 text-slate-200 font-sans min-h-screen flex flex-col antialiased">
 
-  <!-- TOP GLOBAL HEADER -->
-  <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-3 sm:px-4 py-2.5 flex items-center justify-between sticky top-0 z-50">
+  <!-- Toast Container -->
+  <div id="toastContainer"></div>
+
+  <!-- Header -->
+  <header class="bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 z-40 shadow-md">
     <div class="flex items-center gap-3">
-      <div class="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400">
-        <i data-lucide="shield-check" class="w-6 h-6 animate-pulse"></i>
+      <div class="p-2 bg-indigo-500/20 border border-indigo-500/50 rounded-lg text-indigo-400">
+        <i data-lucide="monitor" class="w-6 h-6"></i>
       </div>
       <div>
-        <div class="flex items-center gap-2">
-          <h1 class="font-bold text-sm sm:text-base md:text-lg tracking-wide text-white flex items-center gap-2">
-            臺中榮總住院醫師電腦處方教學系統
-            <span class="text-[10px] bg-emerald-600 text-white font-mono px-2 py-0.5 rounded uppercase font-bold">CPOE Pro</span>
-          </h1>
-        </div>
-        <p class="text-xs text-slate-400">用藥安全、藥物不良反應通報與處方決策輔助 (主講：李維馨藥師)</p>
+        <h1 class="font-bold text-lg text-white flex items-center gap-2">
+          住院醫師 CPOE 電腦處方教學系統
+          <span id="roleBadge" class="text-[10px] bg-emerald-600 text-white font-mono px-2 py-0.5 rounded uppercase font-bold tracking-widest hidden">學員作答端</span>
+        </h1>
+        <p class="text-xs text-slate-400 mt-0.5" id="instructorSubtitle">大螢幕投影主控端 / 即時跨裝置互動</p>
       </div>
     </div>
 
-    <!-- HEADER CONTROLS -->
-    <div class="flex items-center gap-2 md:gap-3">
-      <!-- Role Switcher Indicator -->
-      <div id="roleBadgeContainer" class="flex items-center gap-1.5 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg text-xs">
-        <i data-lucide="user-cog" class="w-4 h-4 text-cyan-400" id="roleIcon"></i>
-        <span class="text-slate-300 font-medium" id="roleText">模式：講師投影大螢幕</span>
+    <!-- Instructor Only Controls -->
+    <div id="instructorControls" class="flex items-center gap-2">
+      <div class="bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-mono flex items-center gap-2">
+        <i data-lucide="users" class="w-4 h-4 text-emerald-400"></i>
+        <span class="text-slate-300">連線學員:</span>
+        <span id="connectedCount" class="text-emerald-300 font-bold text-sm">0</span>
       </div>
-
-      <!-- QR Code Modal Trigger (Instructor Only) -->
-      <button onclick="openModal('qrModal')" class="flex items-center gap-1.5 text-xs bg-emerald-600/30 border border-emerald-500/50 hover:bg-emerald-600/50 text-emerald-200 px-3 py-1.5 rounded-lg transition font-medium shadow-lg" id="qrTriggerBtn">
-        <i data-lucide="qr-code" class="w-4 h-4 text-emerald-400"></i>
-        <span>學員手機掃描作答</span>
+      <button onclick="openQrModal()" class="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-lg transition font-medium shadow-lg shadow-indigo-600/20">
+        <i data-lucide="qr-code" class="w-4 h-4"></i> 學員手機掃描
       </button>
-
-      <!-- PPT Summary Blueprint Modal -->
-      <button onclick="openModal('pptModal')" class="flex items-center gap-1.5 text-xs bg-amber-600/30 border border-amber-500/50 hover:bg-amber-600/50 text-amber-200 px-2.5 py-1.5 rounded-lg transition">
-        <i data-lucide="file-text" class="w-4 h-4 text-amber-400"></i>
-        <span class="hidden sm:inline">PPT 教材總覽</span>
-      </button>
-
-      <!-- 30-min Lesson Timer -->
-      <div class="hidden md:flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-mono">
-        <i data-lucide="clock" class="w-4 h-4 text-amber-400"></i>
-        <span class="text-slate-400">教案倒數:</span>
-        <span id="lessonTimerDisplay" class="text-amber-300 font-bold">30:00</span>
-        <button onclick="toggleLessonTimer()" class="text-xs text-slate-300 hover:text-white ml-1" title="啟動/暫停計時">
-          <i data-lucide="play" class="w-3.5 h-3.5" id="timerPlayIcon"></i>
-        </button>
-      </div>
-
-      <!-- Pharmacy Extension Modal -->
-      <button onclick="openModal('pharmacyModal')" class="flex items-center gap-1.5 text-xs bg-indigo-600/30 border border-indigo-500/50 hover:bg-indigo-600/50 text-indigo-200 px-2.5 py-1.5 rounded-lg transition">
-        <i data-lucide="phone-call" class="w-4 h-4"></i>
-        <span class="hidden lg:inline">藥局緊急分機</span>
+      <button onclick="simulateVotes()" class="flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-lg transition border border-slate-700" title="單機測試用">
+        <i data-lucide="bot" class="w-4 h-4"></i> 模擬20人作答
       </button>
     </div>
   </header>
 
-  <!-- TOP ADR & CLINICAL ALERT BAR -->
-  <section class="bg-red-950/80 border-b border-red-900/60 px-4 py-2 flex items-center justify-between text-xs alert-pulse">
-    <div class="flex items-center gap-2 text-red-200 font-mono overflow-hidden">
-      <i data-lucide="alert-triangle" class="w-4 h-4 text-red-400 flex-shrink-0 animate-bounce"></i>
-      <span class="font-bold">【藥物不良反應記錄 (HIS)】:</span>
-      <span class="truncate">ENICILLIN、UNKNOWN、tw、PCN G Sod. inj (★開立處方時系統將自動進行交叉比對與安全警示攔截)</span>
-    </div>
-    <div class="hidden md:flex items-center gap-3 text-[11px] text-red-300 flex-shrink-0">
-      <span>房間代碼: <strong id="roomPinText" class="text-white font-mono bg-red-900/80 px-2 py-0.5 rounded border border-red-700">CPOE4603</strong></span>
-    </div>
-  </section>
-
-  <!-- MODULE PHASE TABS NAV -->
-  <nav class="bg-slate-900 border-b border-slate-800 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-    <div class="flex items-center gap-2 font-mono text-slate-400">
-      <i data-lucide="layers" class="w-4 h-4 text-emerald-400"></i>
-      <span class="font-bold text-slate-300">30分鐘教案模組選擇：</span>
-    </div>
-    <div class="flex items-center gap-2 flex-wrap" id="phaseTabsContainer">
-      <!-- Dynamic phase tabs injected by JS -->
-    </div>
-  </nav>
-
-  <!-- MAIN INTERACTIVE APP CONTAINER -->
-  <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+  <!-- Main Content Layout -->
+  <main class="flex-1 max-w-[1400px] w-full mx-auto p-4 flex flex-col lg:flex-row gap-6 relative">
     
-    <!-- LEFT 7 COLS: SCENARIO & QUESTION BOX -->
-    <div class="lg:col-span-7 flex flex-col gap-4">
+    <!-- LEFT PANEL: Scenarios & Matrix -->
+    <div class="flex-1 flex flex-col gap-5 fade-in-up" id="leftPanel">
       
-      <!-- Patient Banner -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div id="patientAvatar" class="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center font-bold text-emerald-400 font-mono">
-            36F
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <span id="patientName" class="font-bold text-white text-base">測試人123 (女 / 36歲)</span>
-              <span id="patientBed" class="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">兒童醫學部 ICU Bed 07</span>
-            </div>
-            <p id="patientDiagnosis" class="text-xs text-slate-400 mt-0.5">
-              體重：74.0 Kg | 臨床情境：住院用藥開立與決策輔助演練
-            </p>
-          </div>
-        </div>
-
-        <div class="text-right">
-          <span class="text-[11px] font-mono text-slate-400">作答狀態:</span>
-          <div id="pollStatusBadge" class="text-xs font-bold text-emerald-400 font-mono bg-emerald-950/60 border border-emerald-500/40 px-2.5 py-1 rounded-lg mt-0.5">
-            開放作答中
-          </div>
+      <!-- Top Alert Banner -->
+      <div class="bg-red-950/30 border border-red-500/40 rounded-xl p-3 flex items-center justify-between animate-pulse-glow shadow-lg shadow-red-900/20">
+        <div class="flex items-center gap-2">
+          <i data-lucide="alert-triangle" class="w-5 h-5 text-red-400"></i>
+          <span class="text-sm font-bold text-red-200 tracking-wide">系統警示: 藥物不良反應記錄 (HIS): ENICILLIN、UNKNOWN...</span>
         </div>
       </div>
 
-      <!-- Main Scenario Card -->
-      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-2xl flex-1 flex flex-col justify-between relative overflow-hidden">
+      <!-- Module Navigation Tabs -->
+      <div class="flex items-center gap-2 overflow-x-auto custom-scrollbar pb-2" id="phaseTabsContainer">
+        <!-- Tabs injected by JS -->
+      </div>
+
+      <!-- Slide Focus Matrix (Enlarged and Prominent) -->
+      <div id="slideMatrixContainer" class="w-full transition-all duration-500">
+        <!-- Dynamic Slide Matrix Content -->
+      </div>
+
+      <!-- Narrative Question Box -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+        <div class="absolute -right-10 -top-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
         
-        <div>
-          <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
-            <div class="flex items-center gap-2">
-              <span id="scenarioTag" class="text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-1 rounded-full">
-                模組一：藥名建檔與防錯搜尋
-              </span>
-              <h2 id="scenarioTitle" class="text-sm font-bold text-slate-200">藥品搜尋與 LASA 相似藥防範</h2>
-            </div>
-            <div class="text-xs font-mono text-slate-400 flex items-center gap-1">
-              <i data-lucide="book-open" class="w-3.5 h-3.5 text-emerald-400"></i>
-              <span id="slideRefBadge">PPT Page 4-7</span>
-            </div>
-          </div>
+        <h2 id="scenarioTitle" class="text-xl font-bold text-indigo-300 mb-4 flex items-center gap-2">
+          <i data-lucide="book-open" class="w-6 h-6"></i> 模組標題
+        </h2>
+        
+        <p id="scenarioNarrative" class="text-lg text-slate-100 leading-relaxed font-medium bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+          情境描述內容...
+        </p>
 
-          <!-- Slide Focus Card (PPT Keypoint Preview) -->
-          <div class="mb-3 p-3 bg-slate-950/80 rounded-xl border border-amber-500/30 flex items-start gap-3">
-            <div class="p-2 bg-amber-500/10 rounded-lg text-amber-400 mt-0.5">
-              <i data-lucide="presentation" class="w-5 h-5"></i>
-            </div>
-            <div class="space-y-1 flex-1">
-              <div class="text-xs font-bold text-amber-300 flex items-center justify-between">
-                <span>PPT 重點投影片對照看板</span>
-                <span class="text-[10px] text-slate-400 font-mono" id="pptPageIndicator">投影片 P.4-7 核心規範</span>
-              </div>
-              <p class="text-xs text-slate-300 leading-relaxed" id="pptSummaryText">
-                學名 = 藥名+劑型+劑量。螢幕名前方註記給藥途徑、商品廠牌或複方含量，並具備藥理分類提示以防範 Dipeptiven 開成 Depavent 等 LASA 錯誤。
-              </p>
-            </div>
-          </div>
+        <!-- Vote Options -->
+        <div class="mt-6 space-y-3" id="choicesContainer">
+          <!-- Options injected by JS -->
+        </div>
+      </div>
+    </div>
 
-          <!-- Question Prompt -->
-          <div id="questionPromptBox" class="text-sm font-semibold text-white bg-slate-800/60 p-3 rounded-xl border border-slate-700/80 leading-relaxed mb-4">
-            題目載入中...
-          </div>
-
-          <!-- Choices Stack -->
-          <div id="choicesContainer" class="space-y-2.5">
-            <!-- Dynamic choices -->
-          </div>
+    <!-- RIGHT PANEL: Instructor Stats & Controls -->
+    <div class="w-full lg:w-96 flex flex-col gap-4 fade-in-up" id="rightPanel">
+      
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl sticky top-20">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-5">
+          <h3 class="font-bold text-white text-lg flex items-center gap-2">
+            <i data-lucide="bar-chart-2" class="w-6 h-6 text-indigo-400"></i> 即時作答統計
+          </h3>
+          <span id="pollStatusBadge" class="text-xs font-mono px-2 py-1 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse">作答進行中</span>
         </div>
 
-        <!-- Instructor Control Action Bar -->
-        <div id="instructorControlBar" class="mt-6 pt-4 border-t border-slate-800 flex items-center justify-between gap-3">
-          <div class="text-xs text-slate-400 flex items-center gap-2 font-mono">
-            <i data-lucide="users" class="w-4 h-4 text-emerald-400"></i>
-            <span>已作答學員數: <strong id="totalVoteCount" class="text-white text-sm">0</strong> 人</span>
-          </div>
+        <!-- Progress Bars -->
+        <div class="space-y-5" id="statsContainer">
+          <!-- Stats injected by JS -->
+        </div>
+
+        <!-- Instructor Action Buttons -->
+        <div class="mt-8 space-y-3" id="instructorActions">
+          <button onclick="togglePollState()" id="togglePollBtn" class="w-full py-3 rounded-xl font-bold text-[15px] transition flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/30">
+            <i data-lucide="pause-circle" class="w-5 h-5"></i> 暫停作答，公佈統計與解答
+          </button>
           
-          <div class="flex items-center gap-2">
-            <button onclick="simulateStudentVotes()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition">
-              <i data-lucide="bot" class="w-3.5 h-3.5 text-cyan-400"></i> 模擬全班作答
-            </button>
-            <button onclick="togglePollState()" id="pollActionBtn" class="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg transition">
-              <i data-lucide="pause-circle" class="w-4 h-4"></i> 暫停作答，立即統計
-            </button>
-            <button onclick="nextScenario()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg transition">
-              <span>下一題</span> <i data-lucide="arrow-right" class="w-4 h-4"></i>
-            </button>
-          </div>
-        </div>
-
-      </div>
-
-    </div>
-
-    <!-- RIGHT 5 COLS: LIVE POLL STATS & CPOE SIMULATED TOOLKIT -->
-    <div class="lg:col-span-5 flex flex-col gap-4">
-      
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex-1 flex flex-col justify-between">
-        
-        <div>
-          <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
-            <div class="flex items-center gap-2">
-              <i data-lucide="bar-chart-3" class="w-4 h-4 text-emerald-400"></i>
-              <h3 class="font-bold text-xs sm:text-sm text-slate-200">即時投票統計與長條圖</h3>
-            </div>
-            <span class="text-[11px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800">大螢幕同步</span>
-          </div>
-
-          <!-- Live Voting Stats Bars -->
-          <div id="voteStatsContainer" class="space-y-3 my-4">
-            <!-- Dynamic vote distribution bars -->
-          </div>
-
-          <!-- Explanation Reveal Box (Shown when poll is paused/revealed) -->
-          <div id="explanationBox" class="hidden mt-4 p-3.5 bg-emerald-950/40 border border-emerald-500/50 rounded-xl space-y-2 text-xs">
-            <div class="font-bold text-emerald-300 flex items-center gap-1.5">
-              <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i> 專家解析與臨床教案指引
-            </div>
-            <p id="explanationText" class="text-slate-300 leading-relaxed">
-              解析內容...
-            </p>
-          </div>
-        </div>
-
-        <!-- CPOE Simulated Quick Tools -->
-        <div class="mt-4 pt-3 border-t border-slate-800 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
-          <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5">
-            <i data-lucide="terminal" class="w-3.5 h-3.5 text-cyan-400"></i> 院內 CPOE 快速功能檢索
-          </div>
-          <div class="grid grid-cols-2 gap-2 text-xs">
-            <button onclick="openModal('pharmacyModal')" class="bg-slate-900 hover:bg-slate-800 text-slate-200 p-2 rounded-lg border border-slate-700 text-left flex items-center justify-between">
-              <span class="truncate">📞 藥局分機速查</span>
-              <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-400"></i>
-            </button>
-            <button onclick="openModal('adrModal')" class="bg-slate-900 hover:bg-slate-800 text-slate-200 p-2 rounded-lg border border-slate-700 text-left flex items-center justify-between">
-              <span class="truncate">⚠️ ADR  ★ 藥典註記</span>
-              <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-400"></i>
-            </button>
-          </div>
-        </div>
-
-      </div>
-
-    </div>
-
-  </main>
-
-  <!-- MODAL: QR CODE PROJECTOR (STUDENT SCAN) -->
-  <div id="qrModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
-    <div class="bg-slate-900 border-2 border-emerald-500 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl text-center space-y-3.5 my-8">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-        <h3 class="font-bold text-base text-white flex items-center gap-2">
-          <i data-lucide="scan-line" class="w-5 h-5 text-emerald-400"></i>
-          學員手機掃描作答 QR Code
-        </h3>
-        <button onclick="closeModal('qrModal')" class="text-slate-400 hover:text-white">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-
-      <!-- Environment Diagnosis Banner -->
-      <div id="qrEnvAlert" class="text-left text-xs p-2.5 rounded-lg border flex items-start gap-2 bg-emerald-950/50 border-emerald-500/60 text-emerald-200">
-        <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5"></i>
-        <div class="leading-relaxed">
-          <span class="font-bold">連線狀態就緒：</span>
-          <span id="qrEnvAlertText">手機掃描後將直接進入學員作答端，投票數據將即時傳回講師大螢幕！</span>
-        </div>
-      </div>
-
-      <div class="bg-white p-3.5 rounded-xl inline-block mx-auto shadow-inner border-4 border-slate-700">
-        <div id="qrcodeDisplay" class="flex justify-center items-center"></div>
-      </div>
-
-      <div class="space-y-1.5 text-xs">
-        <div class="text-emerald-300 font-bold text-sm">課堂房間代碼：<span class="font-mono text-amber-300">CPOE4603</span></div>
-        <p class="text-slate-300 text-[11px]">掃描後即可在手機上選擇 A, B, C, D 答案，即時與全班同步！</p>
-        
-        <div class="text-[11px] text-slate-400 font-mono break-all bg-slate-950 p-2 rounded border border-slate-800 text-left" id="qrTargetUrlText">
-          網址載入中...
-        </div>
-      </div>
-
-      <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 text-left space-y-2 text-xs">
-        <div class="flex items-center justify-between text-[11px] text-slate-300 font-semibold">
-          <span class="flex items-center gap-1">
-            <i data-lucide="link-2" class="w-3.5 h-3.5 text-blue-400"></i>
-            自訂公開連線網址 (選填)：
-          </span>
-        </div>
-        <div class="flex gap-2">
-          <input id="customUrlInput" type="text" placeholder="例: https://my-cpoe.web.app" class="flex-1 bg-slate-900 border border-slate-700 text-white px-2.5 py-1.5 rounded text-xs font-mono focus:outline-none focus:border-emerald-500">
-          <button onclick="applyCustomUrl()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded text-xs transition">
-            套用
+          <button onclick="nextScenario()" id="nextScenarioBtn" class="w-full py-3 rounded-xl font-bold text-[15px] transition flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/30 hidden">
+            <i data-lucide="arrow-right-circle" class="w-5 h-5"></i> 解說完畢，前進下一題
           </button>
         </div>
+
+        <!-- Pearl Box (Hidden during active poll) -->
+        <div id="pearlBox" class="mt-6 p-5 bg-slate-800/80 border-2 border-indigo-500/50 rounded-xl hidden shadow-2xl">
+          <h4 class="font-bold text-indigo-300 text-base mb-3 flex items-center gap-2 border-b border-indigo-500/30 pb-2">
+            <i data-lucide="lightbulb" class="w-5 h-5"></i> 藥師 / 系統防錯解析
+          </h4>
+          <p id="pearlContent" class="text-[15px] text-slate-200 leading-relaxed font-medium"></p>
+        </div>
       </div>
 
-      <div class="pt-1 flex justify-center gap-2">
-        <button onclick="copyJoinLink()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 border border-slate-700">
-          <i data-lucide="copy" class="w-3.5 h-3.5"></i> 複製網址
-        </button>
-        <button onclick="testOpenStudentMode()" class="bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/50 text-blue-200 px-3 py-1.5 rounded-lg text-xs flex items-center gap-1">
-          <i data-lucide="external-link" class="w-3.5 h-3.5"></i> 測試學員端
-        </button>
-        <button onclick="closeModal('qrModal')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-1.5 rounded-lg text-xs">
-          返回講堂
-        </button>
-      </div>
     </div>
-  </div>
+  </main>
 
-  <!-- MODAL: PHARMACY EMERGENCY EXTENSIONS -->
-  <div id="pharmacyModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
-    <div class="bg-slate-900 border-2 border-indigo-500 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4 my-8 text-left">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-        <h3 class="font-bold text-base text-white flex items-center gap-2">
-          <i data-lucide="phone-call" class="w-5 h-5 text-indigo-400"></i>
-          藥局緊急聯絡電話與分機 (PPT P.47)
-        </h3>
-        <button onclick="closeModal('pharmacyModal')" class="text-slate-400 hover:text-white">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-      <div class="grid grid-cols-1 gap-2.5 text-xs font-mono">
-        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 flex justify-between items-center">
-          <div>
-            <div class="font-bold text-white text-sm">中央藥局</div>
-            <div class="text-slate-400 text-[11px]">一般住院藥物調劑與日常醫令諮詢</div>
-          </div>
-          <span class="bg-indigo-600 text-white px-3 py-1 rounded font-bold text-sm">4621</span>
+  <!-- MODAL: QR Code for Students -->
+  <div id="qrModal" class="hidden fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-8 shadow-2xl text-center relative">
+      <button onclick="closeQrModal()" class="absolute top-5 right-5 text-slate-400 hover:text-white transition">
+        <i data-lucide="x" class="w-6 h-6"></i>
+      </button>
+      
+      <h3 class="font-bold text-2xl text-white mb-3">學員掃描即時作答</h3>
+      <p class="text-sm text-slate-400 mb-6 leading-relaxed">請學員開啟相機掃描下方 QR Code，不需下載 App 即可進入作答畫面。作答結果將與大螢幕<span class="text-emerald-400 font-bold"> 0.1 秒即時同步</span>。</p>
+      
+      <div class="bg-white p-5 rounded-2xl inline-block mx-auto mb-6 shadow-lg" id="qrcodeCanvas"></div>
+      
+      <div class="mt-2 p-4 bg-slate-950 border border-slate-800 rounded-xl text-left shadow-inner">
+        <label class="text-xs text-amber-400 font-bold mb-2 block flex items-center gap-1">
+          <i data-lucide="info" class="w-4 h-4"></i> 若手機掃描顯示找不到網頁 (需自訂網址)：
+        </label>
+        <div class="flex gap-2">
+          <input type="text" id="customUrlInput" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white focus:border-indigo-500 outline-none transition" placeholder="請輸入您部署後的 GitHub Pages 網址...">
+          <button onclick="updateQrCode()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition shadow-lg">更新 QR</button>
         </div>
-        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 flex justify-between items-center">
-          <div>
-            <div class="font-bold text-white text-sm">第二醫療大樓藥局 (二醫藥局)</div>
-            <div class="text-slate-400 text-[11px]">二大樓住院與專科病房用藥</div>
-          </div>
-          <span class="bg-indigo-600 text-white px-3 py-1 rounded font-bold text-sm">4641</span>
-        </div>
-        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 flex justify-between items-center">
-          <div>
-            <div class="font-bold text-white text-sm">急診藥局</div>
-            <div class="text-slate-400 text-[11px]">急重症與夜間緊急解鎖 / MBD 帶藥處理</div>
-          </div>
-          <span class="bg-indigo-600 text-white px-3 py-1 rounded font-bold text-sm">4615</span>
-        </div>
-        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 flex justify-between items-center">
-          <div>
-            <div class="font-bold text-white text-sm">中央藥局藥物諮詢室</div>
-            <div class="text-slate-400 text-[11px]">藥物交互作用、血中濃度與特殊劑型諮詢</div>
-          </div>
-          <span class="bg-indigo-600 text-white px-3 py-1 rounded font-bold text-sm">4625</span>
-        </div>
-        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 flex justify-between items-center">
-          <div>
-            <div class="font-bold text-white text-sm">電腦藥師 (資訊室/藥學部)</div>
-            <div class="text-slate-400 text-[11px]">CPOE 系統權限、屏障鎖控與開方障礙排除</div>
-          </div>
-          <span class="bg-amber-600 text-white px-3 py-1 rounded font-bold text-sm">4603</span>
-        </div>
-      </div>
-      <div class="pt-2 text-center">
-        <button onclick="closeModal('pharmacyModal')" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-5 py-2 rounded-xl text-xs">
-          關閉視窗
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL: PPT SUMMARY BLUEPRINT -->
-  <div id="pptModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
-    <div class="bg-slate-900 border-2 border-amber-500 rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl space-y-4 my-8 text-left">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-        <h3 class="font-bold text-base text-white flex items-center gap-2">
-          <i data-lucide="file-presentation" class="w-5 h-5 text-amber-400"></i>
-          《住院醫師電腦處方介紹》教材重點藍圖
-        </h3>
-        <button onclick="closeModal('pptModal')" class="text-slate-400 hover:text-white">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-      <div class="space-y-3 text-xs text-slate-300 max-h-96 overflow-y-auto pr-2 custom-scroll leading-relaxed">
-        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-          <div class="font-bold text-amber-300">模組一：藥名建檔原則與防錯搜尋 (P.3-7)</div>
-          <p>學名組成 = 藥名 + 劑型 + 劑量。螢幕名透過標記（口、針、生達廠牌、複方含量、自費$與公費CDC）防範 LASA 相似藥。不確定拼法可加 `%` 模糊搜尋。點選藥品手冊可查外觀、適應症與 Lexidrug/Micromedex。</p>
-        </div>
-        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-          <div class="font-bold text-amber-300">模組二：住院醫囑開立與入帳地雷 (P.8-17, 37)</div>
-          <p>慢性病藥預設 30 天。生效於給藥點會發藥，DC 於時間點不發藥（切勿 DC 於整點）。X-type 軟膏眼藥水開總量由護理師加領。修改劑量等於停用重開。Forxiga 3分鐘開 4 次遭健保追扣點數警示。</p>
-        </div>
-        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-          <div class="font-bold text-amber-300">模組三：後線抗生素與 MBD 出院帶藥 (P.23, 26)</div>
-          <p>二線抗生素待審核 24hr，不通過或過期 7 日內全院鎖定不得重開。MBD 點選後出院帶藥鎖定，修改須致電藥局解鎖並填寫修改原因，列入副院長季報 PDCA 指標。</p>
-        </div>
-        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-          <div class="font-bold text-amber-300">模組四：CDSS 決策輔助與重複用藥鎖控 (P.27-34)</div>
-          <p>分為硬性鎖控（Hard Stop，如同日重複、超量）與軟性警示（Soft Alert，如 Depakine + Meropenem 驟降濃度、Precedex 三條件全選、腎功能 CCr 劑量調整）。</p>
-        </div>
-        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-          <div class="font-bold text-amber-300">模組五：藥師溝通平台與 ADR ★ 藥典註記 (P.40-46)</div>
-          <p>線上回覆藥師處方建議（同意/不同意）。ADR 註記必須優先使用「本院藥典搜尋」產生「★」，方能在日後開藥時自動防錯攔截。預防處方連鎖效應（Prescribing Cascade）。</p>
-        </div>
-      </div>
-      <div class="pt-2 text-center">
-        <button onclick="closeModal('pptModal')" class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-5 py-2 rounded-xl text-xs">
-          我知道了
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL: ADR QUICK GUIDE -->
-  <div id="adrModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
-    <div class="bg-slate-900 border-2 border-red-500 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4 my-8 text-left">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-        <h3 class="font-bold text-base text-white flex items-center gap-2">
-          <i data-lucide="alert-octagon" class="w-5 h-5 text-red-400"></i>
-          藥物不良反應 (ADR) 與過敏註記核心規範 (P.44)
-        </h3>
-        <button onclick="closeModal('adrModal')" class="text-slate-400 hover:text-white">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-      <div class="space-y-3 text-xs text-slate-300 leading-relaxed">
-        <div class="p-3 bg-red-950/40 border border-red-500/40 rounded-xl space-y-1.5">
-          <div class="font-bold text-red-300">★ 必須優先使用「搜尋本院藥典」新增</div>
-          <p>建檔後系統會產生「★」標記，未來全院開立該藥時系統才會具備<strong>自動安全攔截警示功能</strong>。若使用「自行輸入」文字，系統將無法提供安全防錯警示。</p>
-        </div>
-        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
-          <div class="font-bold text-white">藥害救濟通報</div>
-          <p>病患若欲申請藥害救濟，醫院端須先完成 TFDA 通報流程，醫師須於系統註記並知會藥局。</p>
-        </div>
-      </div>
-      <div class="pt-2 text-center">
-        <button onclick="closeModal('adrModal')" class="bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-2 rounded-xl text-xs">
-          關閉
-        </button>
       </div>
     </div>
   </div>
 
   <!-- APPLICATION JAVASCRIPT LOGIC -->
   <script>
-    // --- APP STATE & DATA DEFINITIONS ---
-    let appRole = "instructor"; // 'instructor' or 'student'
-    let currentScenarioIdx = 0;
-    let pollActive = true;
-    let lessonTimerSeconds = 30 * 60;
-    let lessonTimerInterval = null;
-    let isTimerRunning = false;
-    let roomId = "CPOE4603";
-
-    // 5 Training Modules / Scenarios based on PPT
+    // === SCENARIO DATA DEFINITION (10 Deep Modules) ===
     const scenarios = [
       {
-        id: "module_1",
-        phaseName: "模組一：藥名建檔與防錯搜尋",
-        title: "藥品搜尋與 LASA 相似藥防範 (P.6)",
-        slideRef: "PPT Page 4-7",
-        pptSummary: "學名 = 成分+劑型+劑量。螢幕名帶有特殊標記（口、針、生達廠牌、複方含量）。搜尋時具藥理分類提示，避免 Dipeptiven 誤開為 Depavent。",
-        prompt: "住院醫師在開立抗癲癇藥物時，誤將營養劑 Dipeptiven 搜尋並開立成 Sound-Alike 藥品 Depavent。請問 CPOE 系統在搜尋時提供何種防錯機制以防止此類 LASA 錯誤？",
-        choices: [
-          { key: "A", text: "系統會自動封鎖所有開頭為 D 的藥品，強制必須手動刷條碼。", correct: false },
-          { key: "B", text: "系統在搜尋時會依藥理分類分群顯示（如 Misc. Anticonvulsants），並可點選前方藥品手冊查詢外觀與適應症。", correct: true },
-          { key: "C", text: "系統僅允許主治醫師開立抗癲癇藥，住院醫師無法搜尋。", correct: false },
-          { key: "D", text: "系統會強制將所有注射劑轉為口服劑型。", correct: false }
-        ],
-        explanation: "正確答案為 B。CPOE 系統在開立藥品時提供藥理分類提示（Misc. Anticonvulsants vs Analgesics），且不清楚的藥物可點選前方「藥品手冊」查詢外觀、刻痕與適應症，有效防範 Sound-Alike 藥品誤開。",
-        votes: { A: 2, B: 18, C: 1, D: 0 }
+        title: "【模組一】藥品搜尋與防錯機制",
+        pptRef: "PPT Page 4-7, 11",
+        narrative: "您準備開立 SGLT-2 抑制劑降血糖藥物，但不確定『Dapagliflozin』中間的拼法，且擔心開錯成相似字首的藥品。下列哪一種搜尋與辨識方式『最安全且有效』？",
+        slideMatrix: `<div class="bg-indigo-950/60 border-l-4 border-indigo-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">📊 核心看板：藥名建檔與防錯</h3>
+            <ul class="space-y-4 text-lg text-slate-200">
+              <li class="flex gap-3 items-start"><i data-lucide="check-circle-2" class="w-6 h-6 text-emerald-400 shrink-0 mt-0.5"></i><div><span class="text-indigo-400 font-bold">1. 萬用字元：</span>輸入 <code class="bg-slate-900 px-2 py-0.5 rounded text-amber-300 border border-slate-700 shadow-inner">%gliflo</code> 可搜尋非字首關鍵字。</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="check-circle-2" class="w-6 h-6 text-emerald-400 shrink-0 mt-0.5"></i><div><span class="text-indigo-400 font-bold">2. 藥理分類防錯：</span>系統依分類分群 (如 Misc. Analgesics vs Anticonvulsants) 預防 LASA 相似藥誤開。</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="check-circle-2" class="w-6 h-6 text-emerald-400 shrink-0 mt-0.5"></i><div><span class="text-indigo-400 font-bold">3. 藥品手冊查詢：</span>點選前方 📖 圖示，可查看外觀、仿單及健保規範。</div></li>
+            </ul>
+          </div>`,
+        choices: {
+          A: { text: "隨便輸入前三個字母，從下拉清單盲猜挑選", isCorrect: false },
+          B: { text: "使用萬用字元（如輸入 %gliflo）搜尋，並透過系統提示的『藥理分類』與前方『藥品手冊圖示』雙重確認", isCorrect: true },
+          C: { text: "直接打電話給藥局詢問藥碼，不使用系統搜尋功能", isCorrect: false },
+          D: { text: "先開立其他降血糖藥替代，等藥師來照會再改", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】系統具備強大防錯機制！不確定拼法時善用 '%' 萬用字元。同成分、不同劑型或廠牌的藥品，開立時務必核對系統的「藥理分類提示」與「螢幕名」防呆，避免將營養劑 Dipeptiven 誤開為抗癲癇藥 Depavent！"
       },
       {
-        id: "module_2",
-        phaseName: "模組二：住院醫囑開立與入帳地雷",
-        title: "給藥入帳時間點與 X-type 軟膏開立 (P.10, 13, 14)",
-        slideRef: "PPT Page 10, 13, 14, 37",
-        pptSummary: "生效時間於給藥點會發藥；DC 時間於給藥點不會發藥。請勿將 DC 設定在整點。軟膏、眼藥水為 X-type 處方，開立總量後由護理師點選「加領」。",
-        prompt: "護理師反應某病人的外用軟膏（10% Teiria gel 40gm）用完了，且醫師準備調整醫囑。根據簡報規範，下列關於入帳與 X-type 處方操作何者正確？",
-        choices: [
-          { key: "A", text: "可將舊醫囑的 DC 時間設定在常規給藥時間點整點，護理紀錄最整齊。", correct: false },
-          { key: "B", text: "軟膏類為 X-type 處方，兩週內首次處方會發藥，用完由護理師點選「加領」，不需醫師重開。", correct: true },
-          { key: "C", text: "每次軟膏用完，醫師都必須重新開立一張全新處方，否則藥局無法發藥。", correct: false },
-          { key: "D", text: "生效時間若落在給藥時間點上，系統將不會入帳也不會發藥。", correct: false }
-        ],
-        explanation: "正確答案為 B。軟膏與眼藥水為自動設定之 X-type 處方，開立總量後兩週內首次發藥，後續用完由護理師點選「加領」；此外，DC 時間切勿設定在常規給藥時間點上，以免帳務與護理發藥混亂。",
-        votes: { A: 3, B: 17, C: 1, D: 0 }
+        title: "【模組一】螢幕名特殊註記判讀",
+        pptRef: "PPT Page 4-5",
+        narrative: "在開方系統中，您看到一筆藥品的螢幕名標示為『(口)(CDC) Eraflu cap 75mg』以及另一筆『($) Eraflu cap 75mg』。關於螢幕名前方的特殊註記，下列解讀何者正確？",
+        slideMatrix: `<div class="bg-indigo-950/60 border-l-4 border-indigo-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">📊 核心看板：螢幕名標記原則</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-emerald-400 font-bold mb-2">💊 途徑標記</div>
+                <div class="text-slate-300">(口) 口服<br>(針) 針劑</div>
+              </div>
+              <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-emerald-400 font-bold mb-2">🏢 廠牌標記</div>
+                <div class="text-slate-300">(生達) 標示特定<br>學名藥廠牌</div>
+              </div>
+              <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-emerald-400 font-bold mb-2">💰 計價標記</div>
+                <div class="text-slate-300">($) 代表自費<br>(CDC) 疾管署專案</div>
+              </div>
+            </div>
+          </div>`,
+        choices: {
+          A: { text: "($) 代表健保給付，(CDC) 代表該藥物為癌症專用", isCorrect: false },
+          B: { text: "(口) 代表口服，($) 代表自費，(CDC) 代表公費/疾病管制署身分，可避免開錯計價身分", isCorrect: true },
+          C: { text: "螢幕名前方的字眼不具臨床意義，只是一般備註", isCorrect: false },
+          D: { text: "(口) 代表需在口腔內含服，不可吞下", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】螢幕名 (Screen Name) 是防錯的第一道防線！同成分可能因給藥途徑、計價身分 (自費/公費) 或特定廠牌而有不同螢幕名。準確辨識可大幅減少退藥與帳務錯誤。"
       },
       {
-        id: "module_3",
-        phaseName: "模組三：後線抗生素與 MBD 出院帶藥",
-        title: "二線抗生素 24hr 審核與 MBD 帶藥修改 (P.23, 26)",
-        slideRef: "PPT Page 23, 26",
-        pptSummary: "待審核抗生素生效僅 24 小時。審核不通過或過期 7 日內全院鎖定不得重開。MBD 點選後出院帶藥鎖定，修改須致電藥局解鎖並填寫修改原因，列入副院長季報 PDCA 指標。",
-        prompt: "病人的二線抗生素經感染科審核「不通過」被系統停用。根據規定，若要在 7 日內再次開立同品項，權限為何？",
-        choices: [
-          { key: "A", text: "任何住院醫師只要填寫病情需要理由即可自行重開。", correct: false },
-          { key: "B", text: "停用日起 7 天內全院鎖定不得再開立同品項，僅「感染科醫師」具權限解鎖。", correct: true },
-          { key: "C", text: "只要總醫師同意即可由後台解鎖。", correct: false },
-          { key: "D", text: "直接改開口服劑型即可繞過限制。", correct: false }
-        ],
-        explanation: "正確答案為 B。經感染科審核不通過或過期未審核被停用者，停用日起 7 天內全院鎖定不得再開立同品項，僅感染科醫師具權限解鎖；同時，已列印 MBD 藥袋的出院帶藥若需修改，也必須致電藥局解鎖。",
-        votes: { A: 1, B: 19, C: 1, D: 0 }
+        title: "【模組二】醫囑給藥與停用 (DC) 時間地雷",
+        pptRef: "PPT Page 10, 13",
+        narrative: "您準備將病人原有的 Q8H 抗生素停用。系統預設的常規給藥時間點為 09:00、17:00、01:00。為了確保護理師『不會』在早上 09:00 再給一次藥，您應該如何設定停用 (DC) 時間？",
+        slideMatrix: `<div class="bg-rose-950/40 border-l-4 border-rose-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-rose-300 mb-4 border-b border-rose-500/30 pb-2">🚨 核心看板：發藥入帳地雷法則</h3>
+            <div class="bg-slate-950 p-5 rounded-xl border border-rose-500/50">
+              <div class="text-rose-400 font-bold text-xl mb-3 flex items-center gap-2"><i data-lucide="bomb" class="w-6 h-6"></i> 絕對地雷：DC 在整點時間上！</div>
+              <ul class="space-y-3 text-lg text-slate-300 font-medium">
+                <li class="flex items-center gap-2"><i data-lucide="check" class="text-emerald-500"></i> 生效時間落於時間點 ➔ <span class="text-emerald-400">會入帳、會發藥</span></li>
+                <li class="flex items-center gap-2"><i data-lucide="x" class="text-rose-500"></i> DC 時間落於時間點 ➔ <span class="text-rose-400">不會入帳、不會發藥</span></li>
+              </ul>
+              <div class="mt-4 p-3 bg-amber-950/50 rounded-lg text-amber-300 text-sm">⚠️ 嚴重後果：若護理已給藥，但醫師設定 DC 剛好在給藥點，將造成護理端漏給藥與藥局帳務混亂！</div>
+            </div>
+          </div>`,
+        choices: {
+          A: { text: "直接設定 DC 時間為 09:00 整", isCorrect: false },
+          B: { text: "設定 DC 時間為 08:59 以前 (例如 08:00)，避開常規時間點", isCorrect: true },
+          C: { text: "設定 DC 時間為 09:01，讓藥局有緩衝時間", isCorrect: false },
+          D: { text: "不需設定 DC，在備註欄寫『早上不用給』即可", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】停用時間若剛好落於給藥時間點上，系統邏輯將判定『不發藥/不入帳』！若實際護理端已經給藥，會造成帳務與庫存錯誤。好習慣：避開整點，提早 DC！"
       },
       {
-        id: "module_4",
-        phaseName: "模組四：CDSS 決策輔助與重複用藥鎖控",
-        title: "CDSS 硬性鎖控與重大交互作用處置 (P.28, 32, 33)",
-        slideRef: "PPT Page 28-33",
-        pptSummary: "CDSS 包含硬性鎖控（當天重複、超量鎖定）與軟性警示（需填理由或自費）。Depakine + Meropenem 有 Major 交互作用會驟降濃度，Precedex 須 3 條件全選。",
-        prompt: "當醫師同時開立 Depakine (Valproic acid) 注射劑與 Meropenem (Meroxin) 時，CPOE 跳出 Major 級重大交互作用（Meropenem 會急遽降低 Valproic acid 血中濃度導致癲癇發作）。正確的系統應對流程為何？",
-        choices: [
-          { key: "A", text: "系統會直接強制鎖死，完全不允許開立，無任何解套方式。", correct: false },
-          { key: "B", text: "屬於軟性警示與重大交互作用，系統要求輸入臨床使用理由（如臨床有需要、會定期監測）後方可開立。", correct: true },
-          { key: "C", text: "直接忽略警告，因為抗生素與抗癲癇藥沒有藥理衝突。", correct: false },
-          { key: "D", text: "將注射劑改為口服劑型即可自動消除交互作用警示。", correct: false }
-        ],
-        explanation: "正確答案為 B。此為重大交互作用警示（Soft Alert with Reason），系統要求醫師必須輸入臨床處置理由（臨床有需要、會定期監測等）並確認後方能繼續開立。",
-        votes: { A: 2, B: 18, C: 0, D: 1 }
+        title: "【模組二】不規則頻次推算 (QW / Q2D)",
+        pptRef: "PPT Page 34",
+        narrative: "您於『週三』開立一筆 QW (每週一次) 的特殊用藥，但『並未勾選首劑』，且該頻次預設給藥日為『週一』。系統對下一次給藥時間的判定為何？",
+        slideMatrix: `<div class="bg-indigo-950/60 border-l-4 border-indigo-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">📊 核心看板：不規則頻次週期</h3>
+            <ul class="space-y-4 text-lg text-slate-200">
+              <li class="flex gap-3 items-start"><i data-lucide="calendar" class="w-6 h-6 text-amber-400 shrink-0 mt-0.5"></i><div><span class="text-amber-400 font-bold">Q(N)W 週期：</span>若當日不給首劑，下次給藥時間是<strong class="text-rose-400">下週同一天</strong>，而非次日。</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="calendar" class="w-6 h-6 text-amber-400 shrink-0 mt-0.5"></i><div><span class="text-amber-400 font-bold">Q2D/Q3D 週期：</span>若錯過給藥時間點未勾首劑，下一個給藥點是<strong class="text-rose-400">明天</strong>。</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="alert-circle" class="w-6 h-6 text-indigo-400 shrink-0 mt-0.5"></i><div><span class="text-indigo-400 font-bold">防錯提醒：</span>首劑時間必須與指定星期吻合，否則系統會跳出不合法檢核！</div></li>
+            </ul>
+          </div>`,
+        choices: {
+          A: { text: "系統會自動判定為明天 (週四) 給藥", isCorrect: false },
+          B: { text: "系統會判定為下週一給藥，若病患今日急需，應勾選『首劑』或確認生效日", isCorrect: true },
+          C: { text: "處方會直接作廢被系統刪除", isCorrect: false },
+          D: { text: "藥師會自動幫忙修改為 QD 頻次", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】不規則頻次(QW/BIW/Q2D)極易產生漏藥！QW 若未勾首劑，系統將自動跳到「下週」。開立時務必親眼確認系統顯示的「首劑/下次給藥時間」是否符合您的預期。"
       },
       {
-        id: "module_5",
-        phaseName: "模組五：藥師溝通平台與 ADR ★ 藥典註記",
-        title: "藥師處方建議回覆與 ADR ★ 藥典防錯機制 (P.40, 44-46)",
-        slideRef: "PPT Page 40, 44-46",
-        pptSummary: "臨床藥師會發送處方修改建議（如 AKI 暫停 Vancomycin 抽 Trough、禁磨粉劑型換藥），醫師須線上回覆同意/不同意。ADR 註記必須優先使用「本院藥典搜尋」產生「★」才能自動防錯攔截。",
-        prompt: "住院醫師在為病人建檔藥物不良反應 (ADR) 時，下列哪一項操作才能確保未來全院開藥時系統具備「自動安全攔截警示」功能？",
-        choices: [
-          { key: "A", text: "直接在文字備註欄自行輸入藥名（如 '自行輸入'），方便快速。", correct: false },
-          { key: "B", text: "優先使用「搜尋本院藥典<新增>」，建檔後產生「★」註記，系統方能提供安全攔截警示。", correct: true },
-          { key: "C", text: "將 ADR 記錄寫在病程記錄紙本上即可，不需要在 CPOE 建檔。", correct: false },
-          { key: "D", text: "只要主治醫師簽名口頭交班即可。", correct: false }
-        ],
-        explanation: "正確答案為 B。必須優先使用「搜尋本院藥典」新增以產生「★」標記，未來全院開立該藥時系統才能提供自動安全攔截警示；自行輸入文字則無法提供防錯警示。",
-        votes: { A: 1, B: 20, C: 0, D: 0 }
+        title: "【模組二】X-type 處方與反覆開關之痛",
+        pptRef: "PPT Page 14, 15, 37",
+        narrative: "病患的抗生素眼藥水 (X-type) 明天到期，還需繼續點一週，且您發現該醫囑被不小心停用。為了避免造成藥局端與病房端的混亂，您該如何處理最佳？",
+        slideMatrix: `<div class="bg-indigo-950/60 border-l-4 border-indigo-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">📊 核心看板：X-type 展延與開關地雷</h3>
+            <ul class="space-y-4 text-lg text-slate-200">
+              <li class="flex gap-3 items-start"><i data-lucide="droplet" class="w-6 h-6 text-emerald-400 shrink-0 mt-0.5"></i><div><span class="text-emerald-400 font-bold">軟膏/眼藥水 (X-type)：</span>開立總量。兩週內首次發藥，後續由<strong class="text-amber-300">護理師點選「加領」</strong>，不需醫師重開！</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="siren" class="w-6 h-6 text-rose-500 shrink-0 mt-0.5"></i><div><span class="text-rose-400 font-bold">🚨 嚴禁反覆開關醫囑：</span>醫師反覆刪除又開立，會導致病房重複收藥、<strong class="text-rose-500">藥局必須不斷處理退藥與重新配藥</strong>，造成極大流程負擔與浪費！</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="clock" class="w-6 h-6 text-indigo-400 shrink-0 mt-0.5"></i><div><span class="text-indigo-400 font-bold">正確展延方式：</span>請使用系統的<strong class="text-emerald-400">「更改停用時間」</strong>功能。</div></li>
+            </ul>
+          </div>`,
+        choices: {
+          A: { text: "重新開立一筆全新的眼藥水醫囑，再由護理站打電話退回多出來的藥", isCorrect: false },
+          B: { text: "若尚未停用，直接使用「更改停用時間」展延；因X-type特性，藥用完由護理端直接「加領」，絕不要反覆 DC 又重開造成藥局退藥災難", isCorrect: true },
+          C: { text: "請病患家屬自己去藥局買", isCorrect: false },
+          D: { text: "在舊醫囑備註欄寫「請再發一瓶」", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】這非常重要！「反覆刪除又開立」是臨床大忌，會造成藥局不斷重複配藥與退藥作業。延長天數請務必使用『更改停用時間』。X-type 藥膏眼藥水，用完由護理師系統點「加領」即可！"
+      },
+      {
+        title: "【模組二】藥品手冊查詢健保給付規定",
+        pptRef: "PPT Page 7, 29",
+        narrative: "您準備開立高價的標靶藥物或特殊用藥，但不確定病患的條件是否符合健保給付規範。您該如何在 CPOE 系統中最快查詢到相關規定？",
+        slideMatrix: `<div class="bg-indigo-950/60 border-l-4 border-indigo-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">📊 核心看板：藥品資訊深度整合</h3>
+            <div class="bg-slate-900 p-5 rounded-xl border border-slate-700">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="p-2 bg-indigo-500/20 rounded-lg"><i data-lucide="book-open" class="text-indigo-400 w-6 h-6"></i></div>
+                <div class="font-bold text-xl text-white">一鍵直達臺中榮總藥品手冊</div>
+              </div>
+              <ul class="space-y-2 text-slate-300 text-lg ml-11">
+                <li>✅ 外觀圖檔與仿單</li>
+                <li>✅ 適應症與藥動學</li>
+                <li>✅ <strong class="text-emerald-400">健保給付規定及事前審查表</strong></li>
+                <li>✅ 內建 Micromedex® / UpToDate® 連結</li>
+              </ul>
+            </div>
+          </div>`,
+        choices: {
+          A: { text: "上 Google 搜尋健保署 PDF 檔案", isCorrect: false },
+          B: { text: "點擊處方清單前方的『藥品手冊 (書籍圖示)』，裡面直接整合了最新健保給付規定與事前審查連結", isCorrect: true },
+          C: { text: "先開立健保，若被核刪再說", isCorrect: false },
+          D: { text: "打電話請藥師幫忙查", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】系統的藥品手冊是強大工具！不僅有外觀圖片，更即時同步最新的「健保給付規定」，不用跳出系統即可確認病人是否符合健保條件，減少事後遭核刪追扣的風險。"
+      },
+      {
+        title: "【模組三】二線抗生素規範與出院帶藥 (MBD) 鎖定",
+        pptRef: "PPT Page 23, 26",
+        narrative: "您已點選了「許可離院 (MBD)」並印出藥袋。家屬反映家裡有剩藥要求取消一項出院帶藥。同時，病人昨天剛被感染科「退回」一項管制性抗生素。下列處置何者正確？",
+        slideMatrix: `<div class="bg-rose-950/40 border-l-4 border-rose-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-rose-300 mb-4 border-b border-rose-500/30 pb-2">🚨 核心看板：重度鎖控與列管指標</h3>
+            <ul class="space-y-4 text-lg text-slate-200">
+              <li class="flex gap-3 items-start"><i data-lucide="lock" class="w-6 h-6 text-rose-500 shrink-0 mt-0.5"></i><div><span class="text-rose-400 font-bold">二線抗生素 7天禁令：</span>審核未過或過期未審，停用後 7 日內<strong class="text-rose-500">全院鎖定不得再開</strong> (僅感科能解)。</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="printer" class="w-6 h-6 text-amber-400 shrink-0 mt-0.5"></i><div><span class="text-amber-400 font-bold">MBD 出院帶藥修改：</span>印藥袋後即鎖定。欲修改必須<strong class="text-amber-300">致電藥局後台開放</strong>，選填理由後重印藥袋。<span class="text-rose-400">反覆修改會造成藥局退藥重包極大困擾！</span></div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="target" class="w-6 h-6 text-indigo-400 shrink-0 mt-0.5"></i><div><span class="text-indigo-400 font-bold">副院長列管：</span>出院帶藥更改率前三名部科需提 PDCA 報告。</div></li>
+            </ul>
+          </div>`,
+        choices: {
+          A: { text: "自己從系統後台直接刪除即可；抗生素被退回，明天再開一次就好", isCorrect: false },
+          B: { text: "MBD 後處方已鎖定，必須致電藥局開放權限才能修改並重印藥袋，避免藥局做白工；且遭退回的管抗會有 7 天全院鎖定禁令", isCorrect: true },
+          C: { text: "請病人自己把藥丟掉，抗生素則改開自費即可避開審核", isCorrect: false },
+          D: { text: "MBD 藥袋印出後絕對不能改，請病人將就接受", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】MBD 後更改出院帶藥，會讓藥局已經包好的藥作廢重包，極耗人力，因此受副院長嚴格監控更改率。另外，管抗遭退回具備 7 天鎖定期，急用需直接聯絡感染科。"
+      },
+      {
+        title: "【模組三】CDSS 決策輔助：硬鎖控與軟警示",
+        pptRef: "PPT Page 28, 32-33",
+        narrative: "您準備為病人開立 Meropenem，但系統跳出嚴重交互作用警示 (Major)，指出其會導致病人原有的抗癲癇藥 Depakine (Valproic acid) 血中濃度急遽下降。此警示的性質與處置為何？",
+        slideMatrix: `<div class="bg-indigo-950/60 border-l-4 border-indigo-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">📊 核心看板：CDSS 分級防護網</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div class="bg-rose-950/40 p-5 rounded-xl border border-rose-500/50 shadow-md">
+                <div class="text-rose-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="shield-alert" class="w-5 h-5"></i> 硬性鎖控 (Hard Stop)</div>
+                <div class="text-base text-slate-300">當天同藥重複、單日最大劑量超標、管制藥證號不符。系統<strong class="text-rose-400">強制阻擋</strong>無法開立。</div>
+              </div>
+              <div class="bg-amber-950/40 p-5 rounded-xl border border-amber-500/50 shadow-md">
+                <div class="text-amber-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="shield-question" class="w-5 h-5"></i> 軟性警示 (Soft Alert)</div>
+                <div class="text-base text-slate-300">重大交互作用 (如 Depakine+Mero)、重複用藥、CCr調整。系統阻擋，但<strong class="text-amber-400">填寫醫療理由後可放行</strong>。</div>
+              </div>
+            </div>
+          </div>`,
+        choices: {
+          A: { text: "這是「硬性鎖控」，系統絕對不准開立，只能換藥", isCorrect: false },
+          B: { text: "這是「軟性警示」，系統會阻擋，但若臨床確有必要 (如無其他抗生素可用)，勾選或填寫醫療理由並密切監測後，仍可繼續開立", isCorrect: true },
+          C: { text: "警示只是參考，直接按確定忽略即可", isCorrect: false },
+          D: { text: "請病人自己承擔癲癇發作風險", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】CDSS 將風險分為 Hard Stop (絕對開不出來，如劑量超限) 與 Soft Alert (重大交互作用，需填寫理由)。Depakine 與 Carbapenem 類抗生素併用會導致癲癇發作，臨床需極度謹慎！"
+      },
+      {
+        title: "【模組四】臨床溝通：藥師處方建議平台",
+        pptRef: "PPT Page 40",
+        narrative: "病房臨床藥師在後台檢視您的處方後，透過「處方更正建議平台」發送了一則建議：『病人近期 AKI，建議停用 ARB 類降壓藥 Valsartan，改用 Norvasc』。您應該如何正確處置？",
+        slideMatrix: `<div class="bg-indigo-950/60 border-l-4 border-indigo-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">📊 核心看板：處方修改建議溝通平台</h3>
+            <ul class="space-y-4 text-lg text-slate-200">
+              <li class="flex gap-3 items-start"><i data-lucide="stethoscope" class="w-6 h-6 text-emerald-400 shrink-0 mt-0.5"></i><div><span class="text-indigo-400 font-bold">藥師主動介入：</span>針對 AKI 腎毒性藥物停用/減量、TDM 血中濃度監測 (如 Vanco)、管灌病人禁磨粉劑型 (如 Doxaben XL) 發出警示。</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="message-square-check" class="w-6 h-6 text-amber-400 shrink-0 mt-0.5"></i><div><span class="text-amber-400 font-bold">線上閉環溝通：</span>醫師必須於系統點選<strong class="text-emerald-400 bg-emerald-900/40 px-2 rounded">「同意」</strong>或<strong class="text-rose-400 bg-rose-900/40 px-2 rounded">「不同意 (需詳述理由)」</strong>，不可置之不理。</div></li>
+            </ul>
+          </div>`,
+        choices: {
+          A: { text: "裝作沒看到，反正藥師不能強制改我的醫囑", isCorrect: false },
+          B: { text: "打電話把藥師罵一頓", isCorrect: false },
+          C: { text: "必須在系統平台線上回覆「同意」或「不同意 (並詳述臨床醫療理由)」，完成閉環溝通", isCorrect: true },
+          D: { text: "請護理師決定要不要給藥", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】藥師是您醫療團隊的最佳防錯夥伴！包含 TDM 監測建議、管灌禁磨粉提醒等。透過線上溝通平台明確回覆，確保病安並留下完整的醫療決策紀錄。"
+      },
+      {
+        title: "【模組五】ADR 註記與處方連鎖效應 (Prescribing Cascade)",
+        pptRef: "PPT Page 44-46",
+        narrative: "您要為氣喘病人建檔過敏史 (ADR)。同時，病人抱怨住院後出現便秘，您發現他正在使用 Tramadol，正猶豫是否要加開軟便劑。下列敘述何者最符合用藥安全原則？",
+        slideMatrix: `<div class="bg-indigo-950/60 border-l-4 border-indigo-500 p-6 rounded-r-2xl mb-4 shadow-xl">
+            <h3 class="text-xl font-bold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">📊 核心看板：最佳整合時機與處方連鎖</h3>
+            <ul class="space-y-4 text-lg text-slate-200">
+              <li class="flex gap-3 items-start"><i data-lucide="star" class="w-6 h-6 text-amber-400 shrink-0 mt-0.5 fill-amber-400"></i><div><span class="text-rose-400 font-bold">ADR 建檔關鍵：</span>必須優先使用<strong class="text-rose-400">「搜尋本院藥典」</strong>產生「★」標記，系統才會自動攔截！自行輸入文字毫無防護功能。</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="activity" class="w-6 h-6 text-emerald-400 shrink-0 mt-0.5"></i><div><span class="text-emerald-400 font-bold">最佳用藥調整時機：</span><strong class="text-amber-300 bg-amber-900/30 px-2 rounded">住院期間</strong>是檢視與重整門診/雲端藥歷的最佳時機。</div></li>
+              <li class="flex gap-3 items-start"><i data-lucide="layers" class="w-6 h-6 text-indigo-400 shrink-0 mt-0.5"></i><div><span class="text-indigo-400 font-bold">防範處方連鎖效應 (Prescribing Cascade)：</span>病人的新症狀可能是<strong class="text-rose-400">藥物副作用</strong>，應優先考慮「減藥」或「換藥」，而非盲目加開新藥治療副作用！</div></li>
+            </ul>
+          </div>`,
+        choices: {
+          A: { text: "ADR 用『自行輸入文字』建檔最快；便秘就是新疾病，直接開軟便劑", isCorrect: false },
+          B: { text: "必須使用『本院藥典搜尋』建檔 ADR 系統才會攔截。住院是最佳用藥調整時機，應警覺便秘可能是 Tramadol 副作用，避免『處方連鎖效應』而盲目加藥", isCorrect: true },
+          C: { text: "ADR 隨便寫就好；藥開越多代表醫師越重視病人", isCorrect: false },
+          D: { text: "ADR 建檔後永遠不能刪除；軟便劑可以預防性全套開立", isCorrect: false }
+        },
+        pearl: "【系統防呆解析】ADR 沒按規範建檔 (缺乏 ★) ＝ 防護網破洞！另外，請隨時警覺『處方連鎖效應 (Prescribing Cascade)』，將藥物副作用誤判為新疾病而無止盡加藥。善用住院期間進行用藥整合與減藥 (Deprescribing)！"
       }
     ];
 
-    // --- INITIALIZATION ---
-    document.addEventListener("DOMContentLoaded", () => {
+    let appRole = "instructor"; 
+    let currentScenarioIdx = 0;
+    let pollActive = true;
+    let roomId = "CPOE_ROOM_888";
+    let currentUserUuid = 'user_' + Math.random().toString(36).substring(2, 9);
+    
+    // Sync Vars
+    let mqttClient = null;
+    let mqttTopicPrefix = `vghtc_cpoe_${roomId}`;
+    let currentVotes = { A: 0, B: 0, C: 0, D: 0 };
+    let connectedStudents = new Set();
+    let localChannel = null;
+
+    function showToast(message, type = "info") {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      
+      let icon = '<i data-lucide="info" class="w-5 h-5"></i>';
+      if(type === 'success') icon = '<i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i>';
+      if(type === 'warning') icon = '<i data-lucide="alert-triangle" class="w-5 h-5 text-amber-400"></i>';
+      if(type === 'error') icon = '<i data-lucide="x-circle" class="w-5 h-5 text-rose-400"></i>';
+
+      toast.className = `toast flex items-center gap-3 ${type}`;
+      toast.innerHTML = `${icon} <span class="flex-1">${message}</span>`;
+      
+      container.appendChild(toast);
       lucide.createIcons();
-      initPhaseTabs();
-      renderScenario(currentScenarioIdx);
-      initQrCode();
-      startLessonTimer();
 
-      // Check URL parameters for role
-      const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get("role") === "student") {
-        setAppRole("student");
-      }
-    });
+      // Trigger animation
+      setTimeout(() => toast.classList.add('show'), 10);
 
-    // --- ROLE MANAGEMENT ---
-    function setAppRole(role) {
-      appRole = role;
-      const badge = document.getElementById("roleText");
-      const icon = document.getElementById("roleIcon");
-      const triggerBtn = document.getElementById("qrTriggerBtn");
-
-      if (role === "student") {
-        badge.textContent = "模式：學員極簡作答端";
-        icon.setAttribute("data-lucide", "smartphone");
-        if (triggerBtn) triggerBtn.classList.add("hidden");
-        // Adapt layout for student
-        document.getElementById("instructorControlBar").innerHTML = `
-          <div class="w-full text-center text-xs text-emerald-400 font-mono font-bold bg-emerald-950/60 p-3 rounded-xl border border-emerald-500/40">
-            ✅ 手機作答已連線！請點選左側選項進行投票，等待講師公布統計結果。
-          </div>
-        `;
-      } else {
-        badge.textContent = "模式：講師投影大螢幕";
-        icon.setAttribute("data-lucide", "user-cog");
-        if (triggerBtn) triggerBtn.classList.remove("hidden");
-      }
-      lucide.createIcons();
+      // Remove after 3s
+      setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 400);
+      }, 3000);
     }
 
-    // --- PHASE TABS NAVIGATION ---
+    function processSyncMessage(topic, data) {
+      if (appRole === "instructor") {
+        if (topic === `${mqttTopicPrefix}/votes` && data.scenarioIdx === currentScenarioIdx) {
+          currentVotes[data.choice] = (currentVotes[data.choice] || 0) + 1;
+          connectedStudents.add(data.uuid);
+          updateVoteStatsUI();
+          updateConnectedCount();
+        } else if (topic === `${mqttTopicPrefix}/join`) {
+          connectedStudents.add(data.uuid);
+          updateConnectedCount();
+          broadcastState(); 
+        }
+      } else if (appRole === "student" && topic === `${mqttTopicPrefix}/state`) {
+        if (data.scenarioIdx !== undefined && data.scenarioIdx !== currentScenarioIdx) {
+          currentScenarioIdx = data.scenarioIdx;
+          renderScenario(currentScenarioIdx);
+        }
+        if (data.pollActive !== undefined && data.pollActive !== pollActive) {
+          pollActive = data.pollActive;
+          updatePollStateUI();
+        }
+      }
+    }
+
+    function publishSyncMessage(topic, data) {
+      if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(topic, JSON.stringify(data), { retain: topic.endsWith('/state') });
+      } else if (localChannel) {
+        localChannel.postMessage({ topic: topic, data: data });
+      }
+    }
+
+    function initMqttSync() {
+      // 1. 本機備援廣播通道 (解決 Canvas 沙盒阻擋連線的問題)
+      if (window.BroadcastChannel) {
+        localChannel = new BroadcastChannel(mqttTopicPrefix);
+        localChannel.onmessage = (event) => {
+          processSyncMessage(event.data.topic, event.data.data);
+        };
+      }
+
+      // 2. 雲端 MQTT (部署至 GitHub 後發揮作用)
+      try {
+        mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+
+        mqttClient.on('error', (err) => {
+          console.warn("系統提醒: 預覽環境阻擋外部連線 (Canvas CSP)，已自動切換為本機跨分頁模式。部署至 GitHub Pages 後將自動恢復雲端連線。");
+        });
+
+        mqttClient.on('connect', () => {
+          console.log("✅ Cloud Sync Connected!");
+          if (appRole === "instructor") {
+            mqttClient.subscribe(`${mqttTopicPrefix}/votes`);
+            mqttClient.subscribe(`${mqttTopicPrefix}/join`);
+            broadcastState();
+          } else {
+            mqttClient.subscribe(`${mqttTopicPrefix}/state`);
+            publishSyncMessage(`${mqttTopicPrefix}/join`, { uuid: currentUserUuid });
+          }
+        });
+
+        mqttClient.on('message', (topic, message) => {
+          try {
+            const data = JSON.parse(message.toString());
+            processSyncMessage(topic, data);
+          } catch (e) {
+            console.error("Sync Parse Error:", e);
+          }
+        });
+      } catch (err) {
+        console.warn("MQTT Init Failed (Canvas Blocked), running in Local Mode");
+      }
+    }
+
+    function broadcastState() {
+      if (appRole === "instructor") {
+        publishSyncMessage(`${mqttTopicPrefix}/state`, {
+          scenarioIdx: currentScenarioIdx,
+          pollActive: pollActive
+        });
+      }
+    }
+
+    function updateConnectedCount() {
+      document.getElementById('connectedCount').innerText = connectedStudents.size;
+    }
+
+    function setAppRole(role) {
+      appRole = role;
+      if (appRole === "student") {
+        document.getElementById("instructorControls").style.display = "none";
+        document.getElementById("rightPanel").style.display = "none";
+        document.getElementById("phaseTabsContainer").style.display = "none";
+        document.getElementById("instructorSubtitle").style.display = "none";
+        
+        const badge = document.getElementById("roleBadge");
+        badge.style.display = "inline-block";
+        
+        document.getElementById("leftPanel").classList.replace("lg:max-w-3xl", "max-w-3xl");
+        document.getElementById("leftPanel").classList.add("mx-auto");
+      }
+    }
+
     function initPhaseTabs() {
       const container = document.getElementById("phaseTabsContainer");
       container.innerHTML = "";
       scenarios.forEach((sc, idx) => {
         const btn = document.createElement("button");
         btn.id = `phaseBtn_${idx}`;
-        btn.className = `px-3 py-1.5 rounded-lg border font-semibold text-xs transition flex items-center gap-1.5 ${idx === currentScenarioIdx ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg' : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'}`;
-        btn.innerHTML = `<span class="w-2 h-2 rounded-full ${idx === currentScenarioIdx ? 'bg-white animate-pulse' : 'bg-slate-500'}"></span> 模組 ${idx+1}`;
-        btn.onclick = () => {
-          currentScenarioIdx = idx;
-          renderScenario(currentScenarioIdx);
-        };
+        btn.className = `whitespace-nowrap px-4 py-2 rounded-xl border-2 font-bold text-sm transition flex items-center gap-2 ${idx === currentScenarioIdx ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/40' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700'}`;
+        btn.innerHTML = `<span class="w-2.5 h-2.5 rounded-full ${idx === currentScenarioIdx ? 'bg-white animate-pulse' : 'bg-slate-600'}"></span> 題 ${idx+1}`;
+        btn.onclick = () => changeScenario(idx);
         container.appendChild(btn);
       });
     }
 
-    // --- RENDER SCENARIO & QUESTION ---
-    function renderScenario(idx) {
+    window.changeScenario = function(idx) {
       currentScenarioIdx = idx;
+      pollActive = true;
+      
+      // ✅ 強制清空上一題作答紀錄
+      currentVotes = { A: 0, B: 0, C: 0, D: 0 }; 
+      
+      initPhaseTabs();
+      renderScenario(idx);
+      updatePollStateUI();
+      broadcastState(); 
+    };
+
+    window.nextScenario = function() {
+      if (currentScenarioIdx < scenarios.length - 1) {
+        changeScenario(currentScenarioIdx + 1);
+      } else {
+        showToast("課程已全部結束！感謝參與", "success");
+        fireConfetti();
+      }
+    }
+
+    function renderScenario(idx) {
       const sc = scenarios[idx];
+      document.getElementById("scenarioTitle").innerHTML = `<i data-lucide="book-open" class="w-6 h-6 text-indigo-400"></i> ${sc.title} <span class="text-sm bg-slate-800 px-3 py-1 rounded border border-slate-700 text-slate-300 ml-3 font-mono shadow-inner">${sc.pptRef}</span>`;
+      document.getElementById("scenarioNarrative").innerText = sc.narrative;
+      document.getElementById("slideMatrixContainer").innerHTML = sc.slideMatrix;
+      
+      const pearlBox = document.getElementById("pearlBox");
+      if(pearlBox) pearlBox.classList.add("hidden");
+      document.getElementById("pearlContent").innerText = sc.pearl;
 
-      // Reset votes for this scenario upon rendering/advancing
-      sc.votes = { A: 0, B: 0, C: 0, D: 0 };
-
-      // Update Phase Tab styles
-      scenarios.forEach((_, i) => {
-        const btn = document.getElementById(`phaseBtn_${i}`);
-        if (btn) {
-          if (i === idx) {
-            btn.className = "px-3 py-1.5 rounded-lg border font-semibold text-xs transition flex items-center gap-1.5 bg-emerald-600 border-emerald-500 text-white shadow-lg";
-            btn.querySelector("span").className = "w-2 h-2 rounded-full bg-white animate-pulse";
-          } else {
-            btn.className = "px-3 py-1.5 rounded-lg border font-semibold text-xs transition flex items-center gap-1.5 bg-slate-800 border-slate-700 text-slate-300 hover:text-white";
-            btn.querySelector("span").className = "w-2 h-2 rounded-full bg-slate-500";
-          }
-        }
-      });
-
-      // Update Header Badges
-      document.getElementById("scenarioTag").textContent = sc.phaseName;
-      document.getElementById("scenarioTitle").textContent = sc.title;
-      document.getElementById("slideRefBadge").textContent = sc.slideRef;
-      document.getElementById("pptPageIndicator").textContent = `${sc.slideRef} 核心規範`;
-      document.getElementById("pptSummaryText").textContent = sc.pptSummary;
-      document.getElementById("questionPromptBox").textContent = sc.prompt;
-
-      // Render Choices
       const choicesContainer = document.getElementById("choicesContainer");
       choicesContainer.innerHTML = "";
-      sc.choices.forEach(ch => {
-        const cBtn = document.createElement("button");
-        cBtn.className = "w-full text-left p-3.5 rounded-xl border border-slate-700 bg-slate-800/80 hover:bg-slate-800 hover:border-emerald-500/60 transition flex items-start gap-3 group";
-        cBtn.innerHTML = `
-          <span class="flex-shrink-0 w-7 h-7 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center font-mono font-bold text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white transition">${ch.key}</span>
-          <span class="text-xs sm:text-sm text-slate-200 leading-relaxed pt-1">${ch.text}</span>
+      
+      ['A', 'B', 'C', 'D'].forEach(key => {
+        if (!sc.choices[key]) return;
+        const btn = document.createElement("button");
+        btn.id = `choiceBtn_${key}`;
+        btn.className = "w-full text-left px-5 py-4 rounded-xl border-2 border-slate-700 bg-slate-800/80 hover:bg-slate-700 hover:border-indigo-400 transition flex items-start gap-4 group shadow-md";
+        btn.innerHTML = `
+          <div class="w-10 h-10 rounded-lg bg-slate-700 text-white text-lg font-bold flex items-center justify-center shrink-0 group-hover:bg-indigo-500 group-hover:scale-110 transition shadow-md">${key}</div>
+          <div class="text-slate-200 font-medium text-base sm:text-lg pt-1.5">${sc.choices[key].text}</div>
         `;
-        cBtn.onclick = () => handleVote(ch.key);
-        choicesContainer.appendChild(cBtn);
+        btn.onclick = () => handleVote(key, btn);
+        choicesContainer.appendChild(btn);
       });
 
-      // Reset Poll state
-      pollActive = true;
-      document.getElementById("pollStatusBadge").textContent = "開放作答中";
-      document.getElementById("pollStatusBadge").className = "text-xs font-bold text-emerald-400 font-mono bg-emerald-950/60 border border-emerald-500/40 px-2.5 py-1 rounded-lg mt-0.5";
-      document.getElementById("explanationBox").classList.add("hidden");
-      
       updateVoteStatsUI();
       lucide.createIcons();
+      
+      document.getElementById("leftPanel").classList.remove("fade-in-up");
+      void document.getElementById("leftPanel").offsetWidth; 
+      document.getElementById("leftPanel").classList.add("fade-in-up");
     }
 
-    // --- VOTING & STATS ---
-    function handleVote(choiceKey) {
+    window.handleVote = function(choiceKey, btnElement) {
       if (!pollActive) {
-        showToast("投票已暫停", "本題投票已由講師暫停，請等待統計結果公佈", "info");
+        showToast("本題作答已鎖定", "warning");
         return;
       }
-      scenarios[currentScenarioIdx].votes[choiceKey]++;
-      updateVoteStatsUI();
-      showToast("作答成功", `已記錄您的選擇: ${choiceKey}`, "success");
-    }
+
+      // 視覺回饋: 學生端點擊
+      if(appRole === 'student' && btnElement) {
+        ['A','B','C','D'].forEach(k => {
+          let b = document.getElementById(`choiceBtn_${k}`);
+          if(b) b.classList.replace('border-indigo-500', 'border-slate-700');
+        });
+        btnElement.classList.replace('border-slate-700', 'border-indigo-500');
+        btnElement.classList.add('bg-indigo-900/40');
+      }
+
+      publishSyncMessage(`${mqttTopicPrefix}/votes`, {
+        scenarioIdx: currentScenarioIdx,
+        choice: choiceKey,
+        uuid: currentUserUuid
+      });
+      showToast(`已傳送: 選項 ${choiceKey}`, "success");
+
+      // 單機離線防呆處理
+      if (appRole === "instructor" && (!mqttClient || !mqttClient.connected)) {
+        currentVotes[choiceKey]++;
+        updateVoteStatsUI();
+      }
+    };
 
     function updateVoteStatsUI() {
+      if (appRole !== "instructor") return;
+      const container = document.getElementById("statsContainer");
+      container.innerHTML = "";
+      
+      let total = Object.values(currentVotes).reduce((a, b) => a + b, 0);
       const sc = scenarios[currentScenarioIdx];
-      const votes = sc.votes;
-      let total = 0;
-      Object.values(votes).forEach(v => total += v);
-      document.getElementById("totalVoteCount").textContent = total;
 
-      const statsContainer = document.getElementById("voteStatsContainer");
-      statsContainer.innerHTML = "";
+      ['A', 'B', 'C', 'D'].forEach(key => {
+        if (!sc.choices[key]) return;
+        const count = currentVotes[key] || 0;
+        const pct = total === 0 ? 0 : Math.round((count / total) * 100);
+        
+        const isRevealedAndCorrect = !pollActive && sc.choices[key].isCorrect;
+        const isRevealedAndWrong = !pollActive && !sc.choices[key].isCorrect;
 
-      sc.choices.forEach(ch => {
-        const count = votes[ch.key] || 0;
-        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-        const isCorrect = ch.correct;
+        let barColor = "bg-indigo-500";
+        let labelColor = "text-slate-300";
+        
+        if (isRevealedAndCorrect) {
+          barColor = "bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]";
+          labelColor = "text-emerald-400 font-bold text-lg";
+        } else if (isRevealedAndWrong) {
+          barColor = "bg-slate-600";
+          labelColor = "text-slate-500";
+        }
 
-        const row = document.createElement("div");
-        row.className = "space-y-1";
-        row.innerHTML = `
-          <div class="flex justify-between items-center text-xs font-mono">
-            <span class="${isCorrect && !pollActive ? 'text-emerald-400 font-bold' : 'text-slate-300'}">${ch.key}. (${count} 票 / ${pct}%) ${isCorrect && !pollActive ? '✓ [正確答案]' : ''}</span>
-            <span class="text-slate-400">${pct}%</span>
-          </div>
-          <div class="w-full bg-slate-950 rounded-full h-2.5 border border-slate-800 overflow-hidden">
-            <div class="h-2.5 rounded-full transition-all duration-500 ${isCorrect && !pollActive ? 'bg-emerald-500' : 'bg-indigo-600'}" style="width: ${pct}%;"></div>
+        container.innerHTML += `
+          <div class="transition-all duration-300">
+            <div class="flex justify-between text-sm mb-1.5 ${labelColor}">
+              <span class="truncate pr-4">${key}. ${sc.choices[key].text}</span>
+              <span class="font-mono font-bold shrink-0">${count} 票 (${pct}%)</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-3.5 overflow-hidden shadow-inner border border-slate-700">
+              <div class="${barColor} h-3.5 rounded-full transition-all duration-700 ease-out" style="width: ${pct}%"></div>
+            </div>
           </div>
         `;
-        statsContainer.appendChild(row);
       });
     }
 
-    function togglePollState() {
+    window.togglePollState = function() {
       pollActive = !pollActive;
-      const btn = document.getElementById("pollActionBtn");
-      const badge = document.getElementById("pollStatusBadge");
-      const expBox = document.getElementById("explanationBox");
-
-      if (!pollActive) {
-        btn.innerHTML = `<i data-lucide="play-circle" class="w-4 h-4"></i> 恢復作答`;
-        btn.className = "bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg transition";
-        badge.textContent = "已暫停 / 統計揭曉";
-        badge.className = "text-xs font-bold text-amber-400 font-mono bg-amber-950/60 border border-amber-500/40 px-2.5 py-1 rounded-lg mt-0.5";
-        
-        // Show explanation
-        expBox.classList.remove("hidden");
-        document.getElementById("explanationText").textContent = scenarios[currentScenarioIdx].explanation;
-      } else {
-        btn.innerHTML = `<i data-lucide="pause-circle" class="w-4 h-4"></i> 暫停作答，立即統計`;
-        btn.className = "bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg transition";
-        badge.textContent = "開放作答中";
-        badge.className = "text-xs font-bold text-emerald-400 font-mono bg-emerald-950/60 border border-emerald-500/40 px-2.5 py-1 rounded-lg mt-0.5";
-        expBox.classList.add("hidden");
-      }
-      updateVoteStatsUI();
-      lucide.createIcons();
-    }
-
-    function simulateStudentVotes() {
-      const sc = scenarios[currentScenarioIdx];
-      // Randomly add 15-25 votes across choices, favoring correct one
-      sc.choices.forEach(ch => {
-        const add = ch.correct ? Math.floor(Math.random() * 10) + 8 : Math.floor(Math.random() * 4);
-        sc.votes[ch.key] += add;
-      });
-      updateVoteStatsUI();
-      showToast("模擬完成", "已自動模擬全班住院醫師作答投票數據！", "success");
-    }
-
-    function nextScenario() {
-      currentScenarioIdx = (currentScenarioIdx + 1) % scenarios.length;
-      // Clear votes of the new scenario explicitly
-      scenarios[currentScenarioIdx].votes = { A: 0, B: 0, C: 0, D: 0 };
-      renderScenario(currentScenarioIdx);
-    }
-
-    // --- QR CODE GENERATOR ---
-    function initQrCode() {
-      const qrContainer = document.getElementById("qrcodeDisplay");
-      qrContainer.innerHTML = "";
+      updatePollStateUI();
+      broadcastState(); 
       
-      let targetLink = window.location.href.split("?")[0] + "?role=student";
-      const customInput = document.getElementById("customUrlInput").value.trim();
-      if (customInput) {
-        targetLink = customInput.includes("?") ? customInput + "&role=student" : customInput + "?role=student";
+      if (!pollActive) {
+        revealAnswerToInstructor();
       }
+    };
 
-      document.getElementById("qrTargetUrlText").textContent = targetLink;
-
-      try {
-        new QRCode(qrContainer, {
-          text: targetLink,
-          width: 170,
-          height: 170,
-          colorDark: "#0f172a",
-          colorLight: "#ffffff",
-          correctLevel: QRCode.CorrectLevel.M
-        });
-      } catch (err) {
-        qrContainer.innerHTML = `<p class="text-xs text-slate-700">QR Code 引擎載入中...</p>`;
-      }
-      lucide.createIcons();
-    }
-
-    function applyCustomUrl() {
-      initQrCode();
-      showToast("已更新", "QR Code 目標網址已更新！", "success");
-    }
-
-    function testOpenStudentMode() {
-      const target = document.getElementById("qrTargetUrlText").textContent;
-      window.open(target, "_blank");
-    }
-
-    function copyJoinLink() {
-      const target = document.getElementById("qrTargetUrlText").textContent;
-      const textarea = document.createElement("textarea");
-      textarea.value = target;
-      document.body.appendChild(textarea);
-      textarea.select();
-      try {
-        document.execCommand('copy');
-        showToast("複製成功", "已成功複製學員連線網址！", "success");
-      } catch (err) {
-        showToast("複製失敗", "無法自動複製，請手動複製", "danger");
-      }
-      document.body.removeChild(textarea);
-    }
-
-    // --- LESSON TIMER ---
-    function startLessonTimer() {
-      if (lessonTimerInterval) clearInterval(lessonTimerInterval);
-      lessonTimerInterval = setInterval(() => {
-        if (isTimerRunning && lessonTimerSeconds > 0) {
-          lessonTimerSeconds--;
-          updateTimerDisplay();
+    function updatePollStateUI() {
+      if (appRole === "instructor") {
+        const btn = document.getElementById("togglePollBtn");
+        const nextBtn = document.getElementById("nextScenarioBtn");
+        const badge = document.getElementById("pollStatusBadge");
+        
+        if (pollActive) {
+          btn.innerHTML = `<i data-lucide="pause-circle" class="w-5 h-5"></i> 暫停作答，公佈統計與解答`;
+          btn.className = "w-full py-3 rounded-xl font-bold text-[15px] transition flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/30";
+          nextBtn.classList.add("hidden");
+          badge.innerText = "作答進行中";
+          badge.className = "text-xs font-mono px-2 py-1 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse";
+          document.getElementById("pearlBox").classList.add("hidden");
+        } else {
+          btn.innerHTML = `<i data-lucide="play-circle" class="w-5 h-5"></i> 重新開放作答`;
+          btn.className = "w-full py-3 rounded-xl font-bold text-[15px] transition flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-white border border-slate-600";
+          nextBtn.classList.remove("hidden");
+          badge.innerText = "作答已鎖定";
+          badge.className = "text-xs font-mono px-2 py-1 rounded-md bg-rose-500/20 text-rose-400 border border-rose-500/40";
         }
-      }, 1000);
-    }
-
-    function toggleLessonTimer() {
-      isTimerRunning = !isTimerRunning;
-      const icon = document.getElementById("timerPlayIcon");
-      if (isTimerRunning) {
-        icon.setAttribute("data-lucide", "pause");
-        showToast("計時器已啟動", "30分鐘教學倒數計時中", "info");
+        updateVoteStatsUI(); 
+        lucide.createIcons();
       } else {
-        icon.setAttribute("data-lucide", "play");
-        showToast("計時器已暫停", "已暫停教案倒數", "info");
+        const choicesContainer = document.getElementById("choicesContainer");
+        if (!pollActive) {
+          choicesContainer.style.opacity = "0.5";
+          choicesContainer.style.pointerEvents = "none";
+          showToast("講師已結算本題統計", "info");
+          
+          // 若學生答錯，給予震動提示 (Visual check on student side)
+          const sc = scenarios[currentScenarioIdx];
+          let correctKey = Object.keys(sc.choices).find(k => sc.choices[k].isCorrect);
+          ['A','B','C','D'].forEach(k => {
+             let btn = document.getElementById(`choiceBtn_${k}`);
+             if(btn && btn.classList.contains('border-indigo-500') && k !== correctKey) {
+                 btn.classList.add('shake-err');
+             } else if (btn && k === correctKey) {
+                 btn.classList.replace('border-slate-700', 'border-emerald-500');
+                 btn.classList.add('bg-emerald-900/30');
+             }
+          });
+
+        } else {
+          choicesContainer.style.opacity = "1";
+          choicesContainer.style.pointerEvents = "auto";
+          ['A','B','C','D'].forEach(k => {
+             let btn = document.getElementById(`choiceBtn_${k}`);
+             if(btn) btn.className = "w-full text-left px-5 py-4 rounded-xl border-2 border-slate-700 bg-slate-800/80 hover:bg-slate-700 hover:border-indigo-400 transition flex items-start gap-4 group shadow-md";
+          });
+        }
       }
-      lucide.createIcons();
     }
 
-    function updateTimerDisplay() {
-      const mins = Math.floor(lessonTimerSeconds / 60);
-      const secs = lessonTimerSeconds % 60;
-      document.getElementById("lessonTimerDisplay").textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-
-    // --- MODAL UTILS ---
-    function openModal(modalId) {
-      document.getElementById(modalId).classList.remove("hidden");
-      if (modalId === 'qrModal') {
-        initQrCode();
+    function revealAnswerToInstructor() {
+      const sc = scenarios[currentScenarioIdx];
+      const pearlBox = document.getElementById("pearlBox");
+      pearlBox.classList.remove("hidden");
+      pearlBox.classList.add("fade-in-up");
+      
+      let correctKey = Object.keys(sc.choices).find(k => sc.choices[k].isCorrect);
+      let total = Object.values(currentVotes).reduce((a, b) => a + b, 0);
+      let correctVotes = currentVotes[correctKey] || 0;
+      
+      // 答對率超過 50% 觸發慶祝彩花
+      if (total > 0 && (correctVotes / total) > 0.5) {
+        fireConfetti();
       }
     }
 
-    function closeModal(modalId) {
-      document.getElementById(modalId).classList.add("hidden");
+    function fireConfetti() {
+      var duration = 2000;
+      var animationEnd = Date.now() + duration;
+      var defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 10000 };
+
+      function randomInRange(min, max) { return Math.random() * (max - min) + min; }
+
+      var interval = setInterval(function() {
+        var timeLeft = animationEnd - Date.now();
+        if (timeLeft <= 0) { return clearInterval(interval); }
+        var particleCount = 50 * (timeLeft / duration);
+        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
+        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
+      }, 250);
     }
 
-    // --- TOAST NOTIFICATION ---
-    function showToast(title, message, type = "success") {
-      const existing = document.getElementById("toastNotification");
-      if (existing) existing.remove();
+    let qrcode = null;
+    window.openQrModal = function() {
+      document.getElementById('qrModal').classList.remove('hidden');
+      if (!qrcode) {
+        let currentUrl = window.location.href.split('?')[0];
+        
+        if(currentUrl.includes('blob:') || currentUrl.includes('localhost') || currentUrl.includes('file://')) {
+          showToast("警告：目前為本機或預覽網址，手機可能無法直接連線。請自訂 Github 網址更新 QR。", "warning");
+        }
+        
+        let joinUrl = `${currentUrl}?role=student`;
+        qrcode = new QRCode(document.getElementById("qrcodeCanvas"), {
+          text: joinUrl,
+          width: 220,
+          height: 220,
+          colorDark : "#0f172a",
+          colorLight : "#ffffff",
+          correctLevel : QRCode.CorrectLevel.H
+        });
+      }
+    }
 
-      const toast = document.createElement("div");
-      const borderColor = type === "success" ? "border-emerald-500" : type === "danger" ? "border-red-500" : "border-cyan-500";
-      const iconName = type === "success" ? "check-circle" : type === "danger" ? "alert-circle" : "info";
-      const iconColor = type === "success" ? "text-emerald-400" : type === "danger" ? "text-red-400" : "text-cyan-400";
+    window.closeQrModal = function() {
+      document.getElementById('qrModal').classList.add('hidden');
+    }
 
-      toast.id = "toastNotification";
-      toast.className = `fixed bottom-5 right-5 z-50 bg-slate-900 border-2 ${borderColor} text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-bounce transition-all duration-300`;
-      toast.innerHTML = `
-        <i data-lucide="${iconName}" class="w-5 h-5 ${iconColor} flex-shrink-0"></i>
-        <div>
-          <div class="font-bold text-xs">${title}</div>
-          <div class="text-[11px] text-slate-300">${message}</div>
-        </div>
-      `;
-      document.body.appendChild(toast);
+    window.updateQrCode = function() {
+      let customUrl = document.getElementById('customUrlInput').value.trim();
+      if(customUrl) {
+        let joinUrl = customUrl.split('?')[0] + "?role=student";
+        qrcode.clear();
+        qrcode.makeCode(joinUrl);
+        showToast("QR Code 已成功更新為自訂網址", "success");
+      } else {
+        showToast("請輸入有效的網址", "error");
+      }
+    }
+
+    window.simulateVotes = function() {
+      if(!pollActive) return;
+      const sc = scenarios[currentScenarioIdx];
+      let correctKey = Object.keys(sc.choices).find(k => sc.choices[k].isCorrect);
+      
+      for(let i=0; i<20; i++) {
+        setTimeout(() => {
+          let keys = Object.keys(sc.choices);
+          // 模擬較高答對率，但混雜錯誤答案
+          let voteKey = Math.random() > 0.35 ? correctKey : keys[Math.floor(Math.random() * keys.length)];
+          
+          currentVotes[voteKey]++;
+          connectedStudents.add('sim_'+i);
+          updateConnectedCount();
+          updateVoteStatsUI();
+        }, i * 120); 
+      }
+      showToast("模擬 20 名學員湧入作答中...", "info");
+    }
+
+    // Initialize Application
+    window.addEventListener("DOMContentLoaded", () => {
       lucide.createIcons();
-
-      setTimeout(() => {
-        if (toast.parentElement) toast.remove();
-      }, 3500);
-    }
+      initPhaseTabs();
+      
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("role") === "student") {
+        setAppRole("student");
+      }
+      
+      renderScenario(currentScenarioIdx);
+      initMqttSync();
+    });
   </script>
 </body>
 </html>
